@@ -18,6 +18,7 @@ library(leaflet)
 library(htmltools)
 library(htmlwidgets)
 library(plotly)
+library(leaflet.extras2)
 
 # Connexion à la base de données OSP_DATASTAT
 con_osp_datastat <- DBI::dbConnect(odbc::odbc(), 
@@ -128,13 +129,17 @@ Base_vaccin_vendu <- Base_vaccin_vendu %>%
   mutate(nom_region = toupper(trimws(nom_region))) %>%  # Normaliser les noms
   left_join(coords_regions, by = c("nom_region" = "nom") )
 view(Base_vaccin_vendu)
+library(leaflet)
+library(ggplot2)
+library(leaflet)
+library(htmlwidgets)
+library(ggplot2)
 
-
-# Créer un dossier temporaire pour enregistrer les histogrammes
+# Répertoire temporaire pour les histogrammes
 temp_dir <- tempdir()
 
-# Fonction pour générer les histogrammes
-generate_histograms <- function(data, variable1, variable2, var_name, fill_colors) {
+# Fonction pour générer des histogrammes pour chaque variable
+generate_histograms <- function(variable1, variable2, var_name, fill_colors, data) {
   icon_paths <- c()
   
   for (i in 1:nrow(data)) {
@@ -142,16 +147,16 @@ generate_histograms <- function(data, variable1, variable2, var_name, fill_color
     data_values <- c(region[[variable1]], region[[variable2]])
     years <- c("2023", "2024")
     
-    # Créer l'histogramme avec ggplot2 et ajouter les étiquettes
+    # Créer l'histogramme
     p <- ggplot(data = data.frame(years, data_values), aes(x = years, y = data_values, fill = years)) +
       geom_bar(stat = "identity", position = "dodge") +
-      geom_text(aes(label = format(data_values, big.mark = ",")), vjust = -0.5, size = 3) +  # Ajouter les étiquettes
+      geom_text(aes(label = data_values), vjust = -0.5, size = 3) +
       scale_fill_manual(values = fill_colors) +
       labs(title = NULL, x = NULL, y = var_name) +
       theme_void() +
-      ylim(0, max(data[[variable2]]) * 1.1)  # Échelle basée sur les quantités maximales
+      ylim(0, max(data[[variable2]]) * 1.1)
     
-    # Enregistrer l'histogramme en tant qu'image PNG
+    # Enregistrer le graphique
     file_path <- file.path(temp_dir, paste0("region_", i, "_", variable1, "_", variable2, ".png"))
     ggsave(file_path, plot = p, width = 2, height = 2, dpi = 300)
     icon_paths <- c(icon_paths, file_path)
@@ -160,97 +165,89 @@ generate_histograms <- function(data, variable1, variable2, var_name, fill_color
   return(icon_paths)
 }
 
-# Générer les histogrammes pour les vaccins vendus (rouge et bleu)
-Base_vaccin_vendu$qte_icons <- generate_histograms(
-  Base_vaccin_vendu,
+# Générer des icônes histogrammes pour les quantités vendues
+Base_vaccin_admin$qte_icons <- generate_histograms(
   variable1 = "qte_2023",
   variable2 = "qte_2024",
   var_name = "Quantités vendues",
-  fill_colors = c("2023" = "red", "2024" = "blue")
+  fill_colors = c("2023" = "red", "2024" = "blue"),
+  data = Base_vaccin_admin
 )
 
-# Générer les histogrammes pour les vaccins administrés (orange et vert)
-Base_vaccin_admin$qte_icons <- generate_histograms(
-  Base_vaccin_admin,
-  variable1 = "qte_2023",
-  variable2 = "qte_2024",
-  var_name = "Quantités administrées",
-  fill_colors = c("2023" = "orange", "2024" = "green")
+# Générer des icônes fixes pour les vaccins administrés (seringue bleue et rouge)
+Base_vaccin_admin$vaccine_icons <- ifelse(
+  Base_vaccin_admin$qte_2023 > 0,
+  "file:///C:/Users/erwan/OneDrive/Documents/Rstudio/Document%20personnel/Demandes/vaccin/sering_rouge.png",
+  "file:///C:/Users/erwan/OneDrive/Documents/Rstudio/Document%20personnel/Demandes/vaccin/sering_bleu.png"
 )
 
-# Créer la carte interactive avec Leaflet
-leaflet_map <- leaflet() %>%
+# Ajuster la taille des icônes
+vaccine_icons <- icons(
+  iconUrl = Base_vaccin_admin$vaccine_icons,
+  iconWidth = 40,
+  iconHeight = 40
+)
+
+# Créer la carte interactive
+leaflet_map <- leaflet(data = Base_vaccin_admin) %>%
   addTiles() %>%
   
-  # Ajouter les marqueurs pour Vaccins Vendus
+  # Ajouter les histogrammes pour la thématique "Vaccin vendu"
   addMarkers(
-    data = Base_vaccin_vendu,
-    ~longitude, ~latitude,
+    ~longitude.x, ~latitude.x,
     icon = ~icons(iconUrl = qte_icons, iconWidth = 50, iconHeight = 50),
     popup = ~paste(
       "<b>Région :</b> ", nom_region, "<br>",
       "<b>Quantité 2023 :</b> ", format(qte_2023, big.mark = ","), "<br>",
       "<b>Quantité 2024 :</b> ", format(qte_2024, big.mark = ","), "<br>",
-      "<b>Chiffre d'affaires 2023 :</b> ", format(ca_ht_2023t, big.mark = ","), " €<br>",
-      "<b>Chiffre d'affaires 2024 :</b> ", format(ca_ht_2024, big.mark = ","), " €<br>",
-      "<b>Nombre de pharmacies 2024 :</b> ", nbre_pheis_2024
+      "<b>Nombre de pharmacies (2024) :</b> ", nbre_pheis_2024
     ),
-    group = "Vaccins Vendus"
+    group = "Vaccin vendu"
   ) %>%
   
-  # Ajouter les marqueurs pour Vaccins Administrés
+  # Ajouter des icônes pour la thématique "Vaccin administré"
   addMarkers(
-    data = Base_vaccin_admin,
-    ~longitude, ~latitude,
-    icon = ~icons(iconUrl = qte_icons, iconWidth = 50, iconHeight = 50),
+    ~longitude.x, ~latitude.x,
+    icon = vaccine_icons,
     popup = ~paste(
       "<b>Région :</b> ", nom_region, "<br>",
-      "<b>Quantité 2023 :</b> ", format(qte_2023, big.mark = ","), "<br>",
-      "<b>Quantité 2024 :</b> ", format(qte_2024, big.mark = ","), "<br>",
+      "<b>Quantité administrée 2023 :</b> ", format(qte_2023, big.mark = ","), "<br>",
+      "<b>Quantité administrée 2024 :</b> ", format(qte_2024, big.mark = ","), "<br>",
       "<b>Nombre de pharmacies 2023 :</b> ", nbre_pheis_2023, "<br>",
       "<b>Nombre de pharmacies 2024 :</b> ", nbre_pheis_2024
     ),
-    group = "Vaccins Administrés"
+    group = "Vaccin administré"
   ) %>%
   
-  # Ajouter le contrôle des couches
-  addLayersControl(
-    overlayGroups = c("Vaccins Vendus", "Vaccins Administrés"),
-    options = layersControlOptions(collapsed = FALSE)
-  ) %>%
-  
-  # Ajouter des légendes spécifiques à chaque groupe
+  # Ajouter une légende pour "Vaccin vendu"
   addLegend(
     position = "bottomright",
     colors = c("red", "blue"),
     labels = c("Quantité 2023", "Quantité 2024"),
-    title = "Vaccins Vendus",
-    group = "Vaccins Vendus"
+    title = "Vaccin vendu",
+    group = "Vaccin vendu"
   ) %>%
+  
+  # Ajouter une légende pour "Vaccin administré"
   addLegend(
-    position = "bottomright",
-    colors = c("orange", "green"),
-    labels = c("Quantité 2023", "Quantité 2024"),
-    title = "Vaccins Administrés",
-    group = "Vaccins Administrés"
+    position = "bottomleft",
+    colors = c("red", "blue"),
+    labels = c("Administré 2023", "Administré 2024"),
+    title = "Vaccin administré",
+    group = "Vaccin administré"
+  ) %>%
+  
+  # Ajouter un contrôle des couches
+  addLayersControl(
+    overlayGroups = c("Vaccin vendu", "Vaccin administré"),
+    options = layersControlOptions(collapsed = FALSE)
   )
 
 # Sauvegarder la carte comme fichier HTML autonome
-saveWidget(leaflet_map, "carte_vaccins_vendus_administres.html", selfcontained = TRUE)
+saveWidget(leaflet_map, "C:/Users/erwan/OneDrive/Documents/Rstudio/Document personnel/Demandes/vaccin/carte_vaccins_vendus_administres_proportionnelle.html", selfcontained = TRUE)
 
 # Ouvrir la carte dans le navigateur
-browseURL("carte_vaccins_vendus_administres.html")
-
-
-
-
-
-
-
-
-
-
-
+browseURL("C:/Users/erwan/OneDrive/Documents/Rstudio/Document personnel/Demandes/vaccin/carte_vaccins_vendus_administres_proportionnelle.html")
 
 
 
